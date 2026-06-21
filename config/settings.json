@@ -1,0 +1,35 @@
+{
+  "_comment": "Collector tuning. Edit and restart the collector to apply.",
+  "poll_interval_seconds": 5,
+  "idle_threshold_seconds": 120,
+  "max_session_seconds": 14400,
+  "browser_bundle_ids": [
+    "ai.perplexity.comet",
+    "com.google.Chrome"
+  ],
+  "biome_import_interval_seconds": 600,
+  "goals": {
+    "focus_seconds": 14400,
+    "leisure_cap_seconds": 7200,
+    "deep_blocks": 3
+  },
+  "category_roles": {
+    "focus": [
+      "Work",
+      "Uni",
+      "Coding"
+    ],
+    "leisure": [
+      "Fun"
+    ]
+  },
+  "tag_categories": [
+    "Work",
+    "Uni",
+    "Coding",
+    "Fun",
+    "Personal",
+    "Learning"
+  ],
+  "baseline_days": 14
+}

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Time Tracker</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Time Tracker</h1>
+    <div class="head-right">
+      <div class="segmented" id="views">
+        <button data-view="day" class="active">Day</button>
+        <button data-view="week">Week</button>
+        <button data-view="month">Month</button>
+      </div>
+      <div class="datenav">
+        <button id="prev" title="Previous">‹</button>
+        <select id="date"></select>
+        <button id="next" title="Next">›</button>
+      </div>
+      <div class="datenav">
+        <button id="refresh" title="Refresh data (reload latest)">⟳</button>
+        <button id="settings" title="Category roles — choose which count as Focus / Leisure">⚙</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero: rings + streak + insights -->
+    <section class="card hero">
+      <div class="hero-left">
+        <div class="hero-date" id="hero-date"></div>
+        <div class="rings-wrap">
+          <div id="rings"></div>
+          <div class="ring-legend" id="ring-legend"></div>
+        </div>
+        <div class="streak" id="streak"></div>
+      </div>
+      <div class="hero-right">
+        <ul class="insights" id="insights"></ul>
+      </div>
+    </section>
+
+    <div id="day-view">
+      <section class="card">
+        <h2>Activity timeline</h2>
+        <div class="swim" id="swim"></div>
+        <div class="axis"><div></div><div class="axis-ticks" id="axis-ticks"></div></div>
+        <div class="swim-hidden" id="swim-hidden"></div>
+      </section>
+
+      <div class="grid">
+        <section class="card">
+          <h2>Categories</h2>
+          <div class="doughnut-wrap"><canvas id="categories"></canvas></div>
+          <div id="tagrings" class="tagrings" hidden></div>
+        </section>
+        <section class="card">
+          <div class="card-head">
+            <h2>Top apps</h2>
+            <div class="segmented sm" id="app-filter">
+              <button data-src="all" class="active">All</button>
+              <button data-src="mac">Mac</button>
+              <button data-src="iphone">iPhone</button>
+            </div>
+          </div>
+          <div class="app-total" id="app-total"></div>
+          <div class="rowlist" id="apps"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>Website intelligence — Comet</h2>
+        <div id="browsing"></div>
+        <div class="rowlist" id="websites"></div>
+      </section>
+    </div>
+
+    <div id="week-view" hidden>
+      <section class="card">
+        <h2>Last 7 days — time by category</h2>
+        <div class="chart-wrap"><canvas id="trend"></canvas></div>
+      </section>
+    </div>
+
+    <div id="month-view" hidden>
+      <section class="card">
+        <h2 id="month-title">Month</h2>
+        <div class="cal" id="calendar"></div>
+      </section>
+    </div>
+
+    <section class="card" id="hidden-card" style="display:none">
+      <h2>Hidden from tracking</h2>
+      <div class="rowlist" id="hidden-list"></div>
+    </section>
+  </main>
+
+  <footer>All data is stored locally on this Mac. Nothing is uploaded.</footer>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer"></aside>
+  <div class="tip" id="tip"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

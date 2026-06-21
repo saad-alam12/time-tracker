@@ -1,0 +1,49 @@
+{
+  "_comment": "Apps/sites hidden from the dashboard. Filtered out of ALL views (past and future); the raw data stays in the DB untouched, so removing an entry here unhides it completely. type is 'app' (key = bundle id) or 'site' (key = domain). Add via the dashboard's drill-down (eye-off button) or edit here directly.",
+  "ignored": [
+    {
+      "type": "site",
+      "key": "127.0.0.1"
+    },
+    {
+      "type": "site",
+      "key": "google.com"
+    },
+    {
+      "type": "site",
+      "key": "newtab"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.Preferences"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.systempreferences"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.SleepLockScreen"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.control-center"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.ScreenshotServicesService"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.PassbookUIService"
+    },
+    {
+      "type": "app",
+      "key": "com.apple.InCallService"
+    },
+    {
+      "type": "app",
+      "key": "com.betbrother.ios"
+    }
+  ]
+}

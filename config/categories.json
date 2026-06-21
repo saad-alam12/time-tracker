@@ -1,0 +1,59 @@
+{
+  "_comment": "Editable category rules. An app/site is matched by bundle id first, then by website domain. First category that matches wins (order below). Anything unmatched falls into 'default'. Edit freely; the dashboard re-reads this file on each request.",
+  "default": "Uncategorised",
+  "categories": {
+    "Work": {
+      "bundles": [],
+      "domains": [
+        "frm2.tum.de",
+        "mlz-garching.de"
+      ]
+    },
+    "Uni": {
+      "bundles": [
+        "com.pdb.app"
+      ],
+      "domains": [
+        "tum.de",
+        "moodle.tum.de",
+        "campus.tum.de"
+      ]
+    },
+    "Coding": {
+      "bundles": [
+        "com.apple.dt.Xcode",
+        "md.obsidian",
+        "com.microsoft.VSCode"
+      ],
+      "domains": [
+        "localhost",
+        "stackoverflow.com",
+        "developer.apple.com"
+      ]
+    },
+    "Fun": {
+      "bundles": [
+        "com.zhiliaoapp.musically",
+        "com.burbn.instagram",
+        "com.google.ios.youtube",
+        "com.spotify.client",
+        "com.mobilefootie.fotmobpro",
+        "com.kicktipp.kicktippiphone",
+        "com.ubercab.UberEats",
+        "com.amazon.AmazonDE",
+        "de.mcdonalds.McDonaldsInfoApp"
+      ],
+      "domains": [
+        "youtube.com",
+        "netflix.com",
+        "x.com",
+        "twitter.com",
+        "instagram.com",
+        "tiktok.com",
+        "reddit.com",
+        "espn.com",
+        "twitch.tv"
+      ]
+    }
+  }
+}

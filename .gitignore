@@ -1,0 +1,20 @@
+# Privacy: never commit usage data or sample personal data
+data/
+dev/samples/
+# Personal category/tag choices reveal specific sites/videos visited — keep local
+config/overrides.json
+config/tags.json
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.segb
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+data/icons/
