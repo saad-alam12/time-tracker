@@ -1,15 +1,10 @@
 {
-  "_comment": "Activity-timeline display prefs (swimlane only \u2014 does NOT change totals or data). A category is a lane if it is not in 'hidden' AND (has data that day OR is in 'shown'); everything else is a chip. 'order' is the top-to-bottom lane order. Set via the dashboard (drag to reorder, \u2715 to remove, click a chip to add) or edit here.",
-  "order": [
-    "Fun",
-    "Coding"
-  ],
-  "shown": [
-    "Learning"
-  ],
-  "hidden": [
-    "Uncategorised",
-    "Uni",
-    "Work"
-  ]
+  "_comment": "Activity-timeline display prefs, per view ('tag' | 'category'). Does NOT change totals. A lane shows if it is not in 'hidden' AND (has data that day OR is in 'shown'); 'order' is the top-to-bottom lane order. Set via the dashboard (drag, hide, add).",
+  "category": {
+    "order": [],
+    "shown": [],
+    "hidden": [
+      "Entertainment"
+    ]
+  }
 }

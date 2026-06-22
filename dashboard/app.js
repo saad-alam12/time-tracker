@@ -22,7 +22,9 @@ const charts = {};
 let currentDate = null;
 let view = "day";
 
-let CAT_COLOR = {};  // name -> colour, rebuilt from the full category set so every card agrees
+let CAT_COLOR = {};  // name -> colour, rebuilt from the full tag+category set so every card agrees
+let CATEGORY_DEFS = [];   // [{name, tags:[...]}] emergent categories (from the day summary)
+let ALL_TAG_NAMES = [];   // every tag name seen today or in roles/defs (for timeline chips)
 
 function hashName(s) {
   let h = 0;
@@ -125,6 +127,8 @@ function chip(category) {
   if (!category) return "";
   return `<span class="chip" style="background:${categoryColor(category)}33;color:${categoryColor(category)}">${category}</span>`;
 }
+// A row's accent colour now comes from its first tag (no per-row category any more).
+function rowColor(tags) { return (tags && tags.length) ? categoryColor(tags[0]) : "#8e8e93"; }
 // Minimal monochrome glyph marking where an app's usage came from.
 function sourceIcon(source) {
   const ic = {
@@ -160,20 +164,20 @@ function ring(cx, cy, r, color, pct) {
 }
 function renderHero(s) {
   const st = s.stats, g = s.goals;
-  const focusPct = st.focus / g.focus_seconds;
-  const leisPct = st.leisure / g.leisure_cap_seconds;
-  const deepPct = st.deep_block_count / g.deep_blocks;
-  const leisColor = st.leisure > g.leisure_cap_seconds ? "var(--red)" : "#ff9f0a";
+  // Four rings, each = total time across tags with that role (Fun is a cap → red when over).
+  const funColor = st.fun > g.fun_cap_seconds ? "#ff453a" : "#ff9f0a";
   document.getElementById("rings").innerHTML =
     `<svg class="rings" viewBox="0 0 120 120">
-       ${ring(60, 60, 52, "#30d158", focusPct)}
-       ${ring(60, 60, 40, leisColor === "var(--red)" ? "#ff453a" : "#ff9f0a", Math.min(1, leisPct))}
-       ${ring(60, 60, 28, "#0a84ff", deepPct)}
+       ${ring(60, 60, 54, "#30d158", st.focus / g.focus_seconds)}
+       ${ring(60, 60, 41, "#0a84ff", st.productive / g.productive_seconds)}
+       ${ring(60, 60, 28, funColor, Math.min(1, st.fun / g.fun_cap_seconds))}
+       ${ring(60, 60, 15, "#bf5af2", st.deep_block_count / g.deep_blocks)}
      </svg>`;
   document.getElementById("ring-legend").innerHTML = [
     `<div class="rl"><span class="dot" style="background:#30d158"></span><b>${fmt(st.focus)}</b><span>/ ${fmt(g.focus_seconds)} focus</span></div>`,
-    `<div class="rl"><span class="dot" style="background:#ff9f0a"></span><b>${fmt(st.leisure)}</b><span>/ ${fmt(g.leisure_cap_seconds)} leisure</span></div>`,
-    `<div class="rl"><span class="dot" style="background:#0a84ff"></span><b>${st.deep_block_count}</b><span>/ ${g.deep_blocks} deep blocks</span></div>`,
+    `<div class="rl"><span class="dot" style="background:#0a84ff"></span><b>${fmt(st.productive)}</b><span>/ ${fmt(g.productive_seconds)} productive</span></div>`,
+    `<div class="rl"><span class="dot" style="background:${funColor}"></span><b>${fmt(st.fun)}</b><span>/ ${fmt(g.fun_cap_seconds)} fun</span></div>`,
+    `<div class="rl"><span class="dot" style="background:#bf5af2"></span><b>${st.deep_block_count}</b><span>/ ${g.deep_blocks} deep blocks</span></div>`,
   ].join("");
   const streak = st.focus_streak || 0;
   document.getElementById("streak").textContent = streak > 0 ? `🔥 ${streak}-day focus streak` : "";
@@ -192,24 +196,42 @@ function renderHero(s) {
 //   shown  = force a category onto the timeline even with no activity that day
 //   hidden = force a category off the timeline
 // A category is a LANE if: not hidden AND (has data that day OR in shown). Otherwise it's a CHIP.
-let TLP = { order: [], shown: [], hidden: [] };
+// Two views (tag | category); each keeps its own lane order + shown/hidden prefs.
+let TL_VIEW = "tag";
+let TLP_ALL = { tag: { order: [], shown: [], hidden: [] },
+                category: { order: [], shown: [], hidden: [] } };
 let lastSwim = { sessions: [], dayStart: 0 };
 let dragEl = null;
+const TLP = () => TLP_ALL[TL_VIEW];   // active view's prefs
 
 function saveTLP() {
+  const p = TLP();
   fetch("/api/timeline_prefs", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order: TLP.order, shown: TLP.shown, hidden: TLP.hidden }),
+    body: JSON.stringify({ view: TL_VIEW, order: p.order, shown: p.shown, hidden: p.hidden }),
   });
 }
-// Lanes = categories on the timeline, in order. byCat: {cat: sessions[]} for the day.
+// Lane keys a session belongs to in the current view: its tags (Tag view), or every emergent
+// category whose tag set overlaps the session's tags (Category view) — so a session can sit
+// in several category lanes at once.
+function lanesForSession(x) {
+  if (TL_VIEW === "tag") return x.tags || [];
+  const t = new Set(x.tags || []);
+  return CATEGORY_DEFS.filter((d) => d.tags.some((tg) => t.has(tg))).map((d) => d.name);
+}
+// All lane keys offered as chips in the current view.
+function allLaneKeys() {
+  return TL_VIEW === "tag" ? ALL_TAG_NAMES : CATEGORY_DEFS.map((d) => d.name);
+}
+// Lanes on the timeline, in order. byCat: {laneKey: sessions[]} for the day.
 function laneCats(present, byCat) {
-  const hidden = new Set(TLP.hidden), shown = new Set(TLP.shown), seen = new Set(), out = [];
+  const p = TLP();
+  const hidden = new Set(p.hidden), shown = new Set(p.shown), seen = new Set(), out = [];
   const isLane = (c) => !hidden.has(c) && (byCat[c] || shown.has(c));
   const add = (c) => { if (c && isLane(c) && !seen.has(c)) { out.push(c); seen.add(c); } };
-  TLP.order.forEach(add);   // saved order first
-  present.forEach(add);     // then remaining data-carrying cats (already time-sorted)
-  TLP.shown.forEach(add);   // then any force-shown empty lanes not yet placed
+  p.order.forEach(add);    // saved order first
+  present.forEach(add);    // then remaining data-carrying lanes (already time-sorted)
+  p.shown.forEach(add);    // then any force-shown empty lanes not yet placed
   return out;
 }
 
@@ -223,13 +245,13 @@ function renderSwim(sessions, dayStart) {
   const byCat = {};
   for (const x of sessions) {
     if (x.end - x.start < 60) continue; // hide flecks
-    (byCat[x.category] = byCat[x.category] || []).push(x);
+    for (const k of lanesForSession(x)) (byCat[k] = byCat[k] || []).push(x);
   }
   const present = Object.keys(byCat).sort(
     (a, b) => byCat[b].reduce((s, x) => s + x.end - x.start, 0) - byCat[a].reduce((s, x) => s + x.end - x.start, 0)
   );
   const lanes = laneCats(present, byCat);
-  if (!lanes.length) swim.innerHTML = `<div class="empty-state">No categories on the timeline — click a chip below to add one.</div>`;
+  if (!lanes.length) swim.innerHTML = `<div class="empty-state">Nothing on the timeline yet — tag your apps/sites${TL_VIEW === "category" ? " and create categories" : ""}, or click a chip below to add a lane.</div>`;
   for (const cat of lanes) {
     const lane = document.createElement("div");
     lane.className = "lane";
@@ -255,34 +277,37 @@ function renderSwim(sessions, dayStart) {
       // shortened for the tooltip; the source glyph replaces the old "(mac)" text label.
       const titleText = x.title || x.name;
       const short = titleText.length > 52 ? titleText.slice(0, 51) + "…" : titleText;
-      const meta = chip(cat) + (x.tags || []).map((t) => chip(t)).join("");
-      b.onmousemove = (e) => showTip(`<b>${esc(short)}</b>${sourceIcon(x.source)}<br><span class="sub">${t0}–${t1} · ${fmt(x.end - x.start)}</span><br>${meta}`, e);
+      const meta = (x.tags || []).map((t) => chip(t)).join("");
+      b.onmousemove = (e) => showTip(`<b>${esc(short)}</b>${sourceIcon(x.source)}<br><span class="sub">${t0}–${t1} · ${fmt(x.end - x.start)}</span>${meta ? "<br>" + meta : ""}`, e);
       b.onmouseleave = hideTip;
-      b.onclick = () => openDetail("app", x.bundle_id, x.name, x.category);
+      b.onclick = () => openDetail("app", x.bundle_id, x.name);
       track.appendChild(b);
     }
     lane.appendChild(track);
-    lane.querySelector(".lane-hide").onclick = () => {       // remove this category from the timeline
-      TLP.shown = TLP.shown.filter((c) => c !== cat);
-      if (!TLP.hidden.includes(cat)) TLP.hidden.push(cat);
+    lane.querySelector(".lane-hide").onclick = () => {       // remove this lane from the timeline
+      const p = TLP();
+      p.shown = p.shown.filter((c) => c !== cat);
+      if (!p.hidden.includes(cat)) p.hidden.push(cat);
       saveTLP(); renderSwim(lastSwim.sessions, lastSwim.dayStart);
     };
     attachLaneDrag(lane, swim);
     swim.appendChild(lane);
   }
-  // Chip row: every known category that is NOT on the timeline. Click a chip to add it as a lane.
+  // Chip row: every known lane key NOT on the timeline. Click a chip to add it as a lane.
+  const p = TLP();
   const laneSet = new Set(lanes);
   const known = [];
   const push = (c) => { if (c && !laneSet.has(c) && !known.includes(c)) known.push(c); };
-  [...(CATS || []), ...TLP.order, ...TLP.shown, ...TLP.hidden, ...present].forEach(push);
+  [...allLaneKeys(), ...p.order, ...p.shown, ...p.hidden, ...present].forEach(push);
   for (const cat of known) {
     const chip = document.createElement("button");
     chip.className = "swim-chip";
     chip.innerHTML = `<span class="dot" style="background:${categoryColor(cat)}"></span>${cat}`;
     chip.title = "Add to timeline";
-    chip.onclick = () => {                                    // add this category to the timeline
-      TLP.hidden = TLP.hidden.filter((c) => c !== cat);
-      if (!TLP.shown.includes(cat)) TLP.shown.push(cat);
+    chip.onclick = () => {                                    // add this lane to the timeline
+      const pp = TLP();
+      pp.hidden = pp.hidden.filter((c) => c !== cat);
+      if (!pp.shown.includes(cat)) pp.shown.push(cat);
       saveTLP(); renderSwim(lastSwim.sessions, lastSwim.dayStart);
     };
     hiddenWrap.appendChild(chip);
@@ -299,7 +324,8 @@ function attachLaneDrag(lane, swim) {
   lane.addEventListener("dragend", () => {
     lane.classList.remove("dragging"); lane.draggable = false; dragEl = null;
     const visible = [...swim.querySelectorAll(".lane")].map((l) => l.dataset.cat);
-    TLP.order = [...visible, ...TLP.order.filter((c) => !visible.includes(c))];
+    const p = TLP();
+    p.order = [...visible, ...p.order.filter((c) => !visible.includes(c))];
     saveTLP();
   });
   lane.addEventListener("dragover", (e) => {
@@ -310,38 +336,24 @@ function attachLaneDrag(lane, swim) {
   });
 }
 
-// --- Categories doughnut (+ overlapping tag rings) ---
-function renderCategories(cats, catTags) {
-  destroy("categories");
-  const total = cats.reduce((a, c) => a + c.seconds, 0);
-  charts.categories = new Chart(document.getElementById("categories"), {
-    type: "doughnut",
-    data: {
-      labels: cats.map((c) => c.category),
-      datasets: [{
-        data: cats.map((c) => +(c.seconds / 60).toFixed(1)),
-        backgroundColor: cats.map((c) => categoryColor(c.category)),
-        borderColor: "rgba(0,0,0,0)", borderWidth: 2, hoverOffset: 6,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false, cutout: "66%",
-      plugins: {
-        legend: { position: "right", labels: { color: "#f5f5f7", boxWidth: 10, boxHeight: 10, usePointStyle: true } },
-        tooltip: { callbacks: {
-          label: (x) => `${x.label}: ${fmt(x.raw * 60)}`,
-          // Break the hovered category down by overlapping tag ("Coding — of which Work 3h").
-          afterLabel: (x) => {
-            const ct = catTags && catTags[x.label];
-            if (!ct) return [];
-            return Object.entries(ct).sort((a, b) => b[1] - a[1])
-              .map(([t, sec]) => `  of which ${t}: ${fmt(sec)}`);
-          },
-        } },
-        centerTotal: { text: fmt(total), sub: "total" },
-      },
-    },
-  });
+// --- Emergent categories (ranked bar list) ---
+// A category is a named union of tags; its time sums every chunk carrying any member tag, so
+// categories overlap and can exceed the day total — hence a bar list, not a doughnut.
+function renderCategories(cats, totalSeconds) {
+  const el = document.getElementById("categories");
+  if (!cats || !cats.length) {
+    el.innerHTML = `<div class="empty-state">No categories yet — open settings (⚙) to build one from your tags.</div>`;
+    return;
+  }
+  const max = cats[0].seconds || 1, day = totalSeconds || 1;
+  el.innerHTML = cats.map((c) => {
+    const col = categoryColor(c.name);
+    return `<div class="tagbar-row">
+      <span class="tagbar-nm"><i class="dot" style="background:${col}"></i>${esc(c.name)}</span>
+      <span class="tagbar-track"><span class="tagbar-fill" style="width:${Math.max(3, c.seconds / max * 100)}%;background:${col}"></span></span>
+      <span class="tagbar-val">${fmt(c.seconds)} <em>${Math.round(c.seconds / day * 100)}%</em></span>
+    </div>`;
+  }).join("");
 }
 // Tag view: time spent per tag as a ranked bar list. Tags overlap categories (a tag like
 // Work spans Coding + the docs site), so these totals are independent of the doughnut.
@@ -383,26 +395,27 @@ function applyAppFilter() {
   const max = apps[0].seconds || 1;
   for (const a of apps) {
     const dirs = a.directories || [];
+    const col = rowColor(a.tags);
     const row = document.createElement("div");
     row.className = "row";
-    row.appendChild(iconEl("app", a.bundle_id, a.name, categoryColor(a.category)));
+    row.appendChild(iconEl("app", a.bundle_id, a.name, col));
     const meta = document.createElement("div");
     meta.className = "meta";
     const caret = dirs.length ? `<span class="caret" aria-label="Show directories">›</span>` : "";
-    meta.innerHTML = `<div class="nm">${caret}${a.name}${sourceIcon(a.source)}${chip(a.category)}</div>` +
-      `<div class="bar" style="width:${Math.max(4, a.seconds / max * 100)}%;background:${categoryColor(a.category || "Uncategorised")}"></div>`;
-    maybeTag(meta.querySelector(".nm"), "app", a.bundle_id, a.name, a.tags, a.category);
+    meta.innerHTML = `<div class="nm">${caret}${a.name}${sourceIcon(a.source)}</div>` +
+      `<div class="bar" style="width:${Math.max(4, a.seconds / max * 100)}%;background:${col}"></div>`;
+    addTag(meta.querySelector(".nm"), "app", a.bundle_id, a.name, a.tags);
     row.appendChild(meta);
     const val = document.createElement("div");
     val.className = "val"; val.textContent = fmt(a.seconds);
     row.appendChild(val);
-    row.onclick = () => openDetail("app", a.bundle_id, a.name, a.category);
+    row.onclick = () => openDetail("app", a.bundle_id, a.name);
     wrap.appendChild(row);
 
     if (dirs.length) {
       // Inline, collapsed list of the project directories worked in (Warp). Each dir can be
-      // re-categorised on its own (type "dir" override, cascading to subfolders). The
-      // "(other)" bucket — time whose title wasn't a path — has no picker.
+      // tagged on its own (type "dir" tag, cascading to subfolders). The "(other)" bucket —
+      // time whose title wasn't a path — can't be tagged.
       const sublist = document.createElement("div");
       sublist.className = "sublist"; sublist.hidden = true;
       for (const d of dirs) {
@@ -410,12 +423,7 @@ function applyAppFilter() {
         sr.className = "subrow";
         sr.innerHTML = `<div class="nm" title="${esc(d.dir)}">${esc(d.dir)}</div>`;
         if (d.dir !== "(other)") {
-          const cat = document.createElement("button");
-          cat.className = "catedit sm";
-          cat.innerHTML = `<span class="dot" style="background:${categoryColor(d.category)}"></span>${d.category}`;
-          cat.onclick = (e) => { e.stopPropagation(); openCatMenu(e.currentTarget, "dir", d.dir, d.dir); };
-          sr.appendChild(cat);
-          maybeTag(sr, "dir", d.dir, d.dir, d.tags, d.category);
+          addTag(sr, "dir", d.dir, d.dir, d.tags);
         }
         const sv = document.createElement("div");
         sv.className = "val"; sv.textContent = fmt(d.seconds);
@@ -453,38 +461,33 @@ function renderWebsites(sites) {
   const max = sites[0].seconds || 1;
   for (const s of sites) {
     const subs = s.subpages || [];
+    const col = rowColor(s.tags);
     const row = document.createElement("div");
     row.className = "row";
-    row.appendChild(iconEl("site", s.domain, s.domain, categoryColor(s.category)));
+    row.appendChild(iconEl("site", s.domain, s.domain, col));
     const meta = document.createElement("div");
     meta.className = "meta";
     const caret = subs.length ? `<span class="caret" aria-label="Show pages">›</span>` : "";
-    meta.innerHTML = `<div class="nm">${caret}<span>${s.domain}</span>${chip(s.category)} <span class="val">· ${s.sessions} visits</span></div>` +
-      `<div class="bar" style="width:${Math.max(4, s.seconds / max * 100)}%;background:${categoryColor(s.category || "Uncategorised")}"></div>`;
-    maybeTag(meta.querySelector(".nm"), "site", s.domain, s.domain, s.tags, s.category);
+    meta.innerHTML = `<div class="nm">${caret}<span>${s.domain}</span> <span class="val">· ${s.sessions} visits</span></div>` +
+      `<div class="bar" style="width:${Math.max(4, s.seconds / max * 100)}%;background:${col}"></div>`;
+    addTag(meta.querySelector(".nm"), "site", s.domain, s.domain, s.tags);
     row.appendChild(meta);
     const val = document.createElement("div");
     val.className = "val"; val.textContent = fmt(s.seconds);
     row.appendChild(val);
-    row.onclick = () => openDetail("site", s.domain, s.domain, s.category);
+    row.onclick = () => openDetail("site", s.domain, s.domain);
     wrap.appendChild(row);
 
     if (subs.length) {
-      // Inline, collapsed list of this domain's pages/videos (≥10 min). Each page can be
-      // re-categorised on its own; clicking the caret toggles the list, clicking a page's
-      // category chip opens the picker for that page only (type "page" override).
+      // Inline, collapsed list of this domain's pages/videos (≥3 min). Each page can be tagged
+      // on its own (type "page"); clicking the caret toggles the list.
       const sublist = document.createElement("div");
       sublist.className = "sublist"; sublist.hidden = true;
       for (const sp of subs) {
         const sr = document.createElement("div");
         sr.className = "subrow";
         sr.innerHTML = `<div class="nm" title="${esc(sp.page)}">${esc(sp.label)}</div>`;
-        const cat = document.createElement("button");
-        cat.className = "catedit sm";
-        cat.innerHTML = `<span class="dot" style="background:${categoryColor(sp.category)}"></span>${sp.category}`;
-        cat.onclick = (e) => { e.stopPropagation(); openCatMenu(e.currentTarget, "page", sp.page, sp.label); };
-        sr.appendChild(cat);
-        maybeTag(sr, "page", sp.page, sp.label, sp.tags, sp.category);
+        addTag(sr, "page", sp.page, sp.label, sp.tags);
         const sv = document.createElement("div");
         sv.className = "val"; sv.textContent = fmt(sp.seconds);
         sr.appendChild(sv);
@@ -560,7 +563,7 @@ async function loadCalendar(date) {
 }
 
 // --- Drill-down drawer ---
-async function openDetail(kind, key, name, category) {
+async function openDetail(kind, key, name) {
   const d = await getJSON(`/api/detail?kind=${kind}&key=${encodeURIComponent(key)}&date=${currentDate}`);
   const drawer = document.getElementById("drawer");
   const avg = d.history.length ? d.history.reduce((a, h) => a + h.seconds, 0) / d.history.length : 0;
@@ -568,9 +571,7 @@ async function openDetail(kind, key, name, category) {
     `<div class="drawer-head">
        <span class="ico" id="d-ico"></span>
        <div><div class="nm">${name}</div>
-            <button class="catedit" id="d-cat" title="Change category — applies from now on">
-              <span class="dot" style="background:${categoryColor(category)}"></span>${category || "Uncategorised"} ▾
-            </button></div>
+            <span id="d-tags"></span></div>
        <button class="hidebtn" id="d-hide" title="Hide from tracking — removes it from all views (undo in the Hidden panel)">Hide</button>
        <button class="close" id="d-close">✕</button>
      </div>
@@ -583,13 +584,13 @@ async function openDetail(kind, key, name, category) {
      <div class="chart-sm"><canvas id="d-history"></canvas></div>
      <h3>Time of day (today)</h3>
      <div class="chart-sm"><canvas id="d-hourly"></canvas></div>`;
+  const col = rowColor(d.tags);
   document.getElementById("d-ico").replaceWith(
-    Object.assign(iconEl(kind, key, name, categoryColor(category)), { className: "ico" })
+    Object.assign(iconEl(kind, key, name, col), { className: "ico" })
   );
+  document.getElementById("d-tags").appendChild(tagControl(kind, key, name, d.tags || []));
   document.getElementById("d-close").onclick = closeDrawer;
-  document.getElementById("d-cat").onclick = (e) => { e.stopPropagation(); openCatMenu(e.currentTarget, kind, key, name); };
   document.getElementById("d-hide").onclick = () => setIgnore(kind, key, true);
-  const col = categoryColor(category);
   destroy("d-history"); destroy("d-hourly");
   charts["d-history"] = new Chart(document.getElementById("d-history"), {
     type: "line",
@@ -620,148 +621,131 @@ function closeDrawer() {
   document.getElementById("scrim").classList.remove("open");
 }
 
-// --- Settings: Focus / Leisure category roles ---
+// --- Settings: tag roles + emergent categories ---
 async function openSettings() {
-  const [cats, roles] = await Promise.all([
+  const [tags, roles, defs] = await Promise.all([
+    getJSON("/api/tags"),
+    getJSON("/api/tag_roles"),
     getJSON("/api/categories"),
-    getJSON("/api/category_roles"),
   ]);
-  const focus = new Set(roles.focus), leisure = new Set(roles.leisure);
-  const roleOf = (c) => (focus.has(c) ? "focus" : leisure.has(c) ? "leisure" : "neither");
+  const focus = new Set(roles.focus), prod = new Set(roles.productive), fun = new Set(roles.fun);
+  const roleOf = (t) => focus.has(t) ? "focus" : prod.has(t) ? "productive" : fun.has(t) ? "fun" : "neither";
+  const allTags = [...new Set([...tags, ...roles.focus, ...roles.productive, ...roles.fun])]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   const drawer = document.getElementById("drawer");
   drawer.innerHTML =
     `<div class="drawer-head">
-       <div><div class="nm">Category roles</div></div>
+       <div><div class="nm">Tag roles & categories</div></div>
        <button class="close" id="s-close">✕</button>
      </div>
-     <p class="roles-help">Edit a name to rename a category everywhere (past and future data).
-       Focus counts toward the green ring and deep-work blocks; Leisure toward the orange ring;
-       Neither is excluded from both. New categories start as Neither.
-       <b>Tags</b> enables the +tag control for that category (for broad categories like Coding
-       or Leisure that aren't descriptive enough on their own).</p>
-     <div class="roles-list">${cats.map((c) => `
-       <div class="roles-row" data-cat="${c}">
-         <input class="cat-name" value="${c}" data-orig="${c}" spellcheck="false">
+     <p class="roles-help">A tag's <b>role</b> only decides which activity ring it feeds —
+       Focus, Productive and Fun each have a ring; Neither feeds none. It is independent of
+       categories.</p>
+     <div class="roles-list">${allTags.map((t) => `
+       <div class="roles-row" data-tag="${esc(t)}">
+         <span class="role-nm"><i class="dot" style="background:${categoryColor(t)}"></i>${esc(t)}</span>
          <div class="segmented sm role-seg">
            <button data-role="focus">Focus</button>
-           <button data-role="leisure">Leisure</button>
+           <button data-role="productive">Productive</button>
+           <button data-role="fun">Fun</button>
            <button data-role="neither">Neither</button>
          </div>
-         <label class="tag-toggle"><input type="checkbox" class="tag-chk" ${TAG_CATS.has(c) ? "checked" : ""}>Tags</label>
-         <button class="del-cat" title="Delete category (its items become Uncategorised)">🗑</button>
-       </div>`).join("")}</div>
-     <button class="save-btn" id="s-save">Save</button>`;
+       </div>`).join("") || `<div class="empty-state">No tags yet — tag some apps/sites first.</div>`}</div>
+     <button class="save-btn" id="s-save-roles">Save roles</button>
+
+     <h3 class="settings-h">Categories</h3>
+     <p class="roles-help">A category is a named group of tags. Its time sums every chunk
+       carrying any of its tags, so categories may overlap.</p>
+     <div id="cat-defs"></div>
+     <button class="save-btn ghost" id="s-add-cat">+ New category</button>`;
+
   for (const row of drawer.querySelectorAll(".roles-row")) {
-    const cur = roleOf(row.dataset.cat);
+    const cur = roleOf(row.dataset.tag);
     for (const b of row.querySelectorAll("button")) {
       b.classList.toggle("active", b.dataset.role === cur);
       b.onclick = () => { for (const x of row.querySelectorAll("button")) x.classList.toggle("active", x === b); };
     }
   }
-  // Delete a category immediately (standalone from Save): its rule, lane, roles and tags are
-  // removed and pinned items are rewritten to Uncategorised. Confirm first — irreversible.
-  for (const btn of drawer.querySelectorAll(".del-cat")) {
-    btn.onclick = async () => {
-      const name = btn.closest(".roles-row").dataset.cat;
-      if (!confirm(`Delete category "${name}"? Its apps/sites become Uncategorised. This can't be undone.`)) return;
-      const res = await fetch("/api/delete_category", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) { alert(`Delete "${name}" failed: ${await res.text()}`); return; }
-      CATS = null;           // category picker cache is now stale
-      await openSettings();  // re-render the drawer without the deleted category
-      await load(currentDate);
-    };
-  }
   document.getElementById("s-close").onclick = closeDrawer;
-  document.getElementById("s-save").onclick = async () => {
-    const rows = [...drawer.querySelectorAll(".roles-row")];
-    // 1. Apply renames first (one call each) so the role lists below use the new names.
-    for (const row of rows) {
-      const inp = row.querySelector(".cat-name");
-      const orig = inp.dataset.orig, name = inp.value.trim() || orig;
-      if (name === orig) continue;
-      const res = await fetch("/api/rename_category", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ old: orig, new: name }),
-      });
-      if (!res.ok) { alert(`Rename "${orig}" → "${name}" failed: ${await res.text()}`); return; }
-      inp.dataset.orig = name;  // so a second save doesn't re-rename
+  document.getElementById("s-save-roles").onclick = async () => {
+    const f = [], p = [], u = [];
+    for (const row of drawer.querySelectorAll(".roles-row")) {
+      const t = row.dataset.tag, active = row.querySelector("button.active").dataset.role;
+      if (active === "focus") f.push(t);
+      else if (active === "productive") p.push(t);
+      else if (active === "fun") u.push(t);
     }
-    // 2. Save Focus/Leisure roles using the (possibly renamed) names.
-    const f = [], l = [];
-    for (const row of rows) {
-      const name = row.querySelector(".cat-name").value.trim() || row.dataset.cat;
-      const active = row.querySelector("button.active").dataset.role;
-      if (active === "focus") f.push(name);
-      else if (active === "leisure") l.push(name);
-    }
-    await fetch("/api/category_roles", {
+    await fetch("/api/tag_roles", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ focus: f, leisure: l }),
+      body: JSON.stringify({ focus: f, productive: p, fun: u }),
     });
-    // 3. Save which categories have tagging enabled (using the possibly-renamed names).
-    const tc = [];
-    for (const row of rows) {
-      const name = row.querySelector(".cat-name").value.trim() || row.dataset.cat;
-      if (row.querySelector(".tag-chk").checked) tc.push(name);
-    }
-    await fetch("/api/tag_categories", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categories: tc }),
-    });
-    closeDrawer();
-    await load(currentDate);  // recompute rings/deep-work with the new roles + names
+    await load(currentDate);   // recompute the rings
+  };
+
+  renderCatDefs(drawer, defs, allTags);
+  document.getElementById("s-add-cat").onclick = () => {
+    defs.push({ name: "", tags: [] });
+    renderCatDefs(drawer, defs, allTags);
   };
   document.getElementById("scrim").classList.add("open");
   drawer.classList.add("open");
 }
 
-// --- Category picker (time-aware: applies from now on) ---
-let CATS = null;
-function closeCatMenu() { document.querySelector(".catmenu")?.remove(); }
-async function openCatMenu(anchor, kind, key, name) {
-  closeCatMenu();
-  if (!CATS) CATS = await getJSON("/api/categories");
-  const menu = document.createElement("div");
-  menu.className = "catmenu";
-  for (const c of CATS) {
-    const it = document.createElement("div");
-    it.className = "catmenu-it";
-    it.innerHTML = `<span class="dot" style="background:${categoryColor(c)}"></span>${c}`;
-    it.onclick = () => applyCategory(kind, key, name, c);
-    menu.appendChild(it);
+// Render the editable list of category definitions inside the settings drawer.
+function renderCatDefs(drawer, defs, allTags) {
+  const wrap = drawer.querySelector("#cat-defs");
+  wrap.innerHTML = defs.map((c, i) => `
+    <div class="catdef" data-i="${i}" data-orig="${esc(c.name)}">
+      <div class="catdef-head">
+        <input class="catdef-name" value="${esc(c.name)}" placeholder="Category name" spellcheck="false">
+        <button class="catdef-save" title="Save category">Save</button>
+        <button class="catdef-del" title="Delete category">🗑</button>
+      </div>
+      <div class="catdef-tags">${allTags.map((t) => `
+        <label class="tagpick"><input type="checkbox" value="${esc(t)}" ${c.tags.includes(t) ? "checked" : ""}>
+          <span style="border-color:${categoryColor(t)};color:${categoryColor(t)}">${esc(t)}</span></label>`).join("")
+        || `<span class="muted">No tags to pick yet.</span>`}</div>
+    </div>`).join("") || `<div class="empty-state">No categories yet.</div>`;
+
+  for (const el of wrap.querySelectorAll(".catdef")) {
+    const i = +el.dataset.i;
+    el.querySelector(".catdef-save").onclick = async () => {
+      const name = el.querySelector(".catdef-name").value.trim();
+      if (!name) { alert("Category needs a name."); return; }
+      const tags = [...el.querySelectorAll(".catdef-tags input:checked")].map((x) => x.value);
+      const old = el.dataset.orig;
+      const res = await fetch("/api/category_def", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, tags, old_name: old || undefined }),
+      });
+      if (!res.ok) { alert(`Save "${name}" failed: ${await res.text()}`); return; }
+      defs[i] = { name, tags };
+      el.dataset.orig = name;
+      await load(currentDate);
+    };
+    el.querySelector(".catdef-del").onclick = async () => {
+      const name = el.dataset.orig || el.querySelector(".catdef-name").value.trim();
+      if (name && !confirm(`Delete category "${name}"?`)) return;
+      if (name) {
+        const res = await fetch("/api/delete_category", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        if (!res.ok) { alert(`Delete failed: ${await res.text()}`); return; }
+      }
+      defs.splice(i, 1);
+      renderCatDefs(drawer, defs, allTags);
+      await load(currentDate);
+    };
   }
-  const nw = document.createElement("div");
-  nw.className = "catmenu-it new";
-  nw.textContent = "+ New category…";
-  nw.onclick = () => { const v = prompt("New category name"); if (v && v.trim()) applyCategory(kind, key, name, v.trim()); };
-  menu.appendChild(nw);
-  document.body.appendChild(menu);
-  const r = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 12) + "px";
-  menu.style.top = (r.bottom + 6) + "px";
-  setTimeout(() => document.addEventListener("click", closeCatMenu, { once: true }), 0);
-}
-async function applyCategory(kind, key, name, category) {
-  closeCatMenu();
-  await fetch("/api/categorize", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: kind, key, category }),  // "app" | "site" | "page" | "dir"
-  });
-  CATS = null;                 // a new category may have been created
-  await load(currentDate);     // refresh totals/lists with the new mapping
-  if (kind !== "page" && kind !== "dir") openDetail(kind, key, name, category);  // pages/dirs have no detail drawer
 }
 
-// --- Tag picker (multi-select, orthogonal to category; time-aware like overrides) ---
+// --- Tag picker (multi-select, time-aware) ---
 let TAGS = null;
-let TAG_CATS = new Set();  // categories for which tagging is enabled (from settings)
 function closeTagMenu() { document.querySelector(".tagmenu")?.remove(); }
-// Append a +tag control only when the item's category is tag-enabled (settings → Tags).
-function maybeTag(parent, kind, key, name, tags, category) {
-  if (category && TAG_CATS.has(category)) parent.appendChild(tagControl(kind, key, name, tags));
+// Append the +tag control to a row (every app/site/page/dir row has one).
+function addTag(parent, kind, key, name, tags) {
+  parent.appendChild(tagControl(kind, key, name, tags));
 }
 // A small inline control for a row: shows current tags as pills, opens the tag menu.
 function tagControl(kind, key, name, tags) {
@@ -779,7 +763,8 @@ async function openTagMenu(anchor, kind, key, name, current) {
   const cur = new Set(current);
   const menu = document.createElement("div");
   menu.className = "catmenu tagmenu";
-  for (const t of [...new Set([...TAGS, ...current])]) {
+  const opts = [...new Set([...TAGS, ...current])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  for (const t of opts) {
     const on = cur.has(t);
     const it = document.createElement("div");
     it.className = "catmenu-it" + (on ? " on" : "");
@@ -828,13 +813,22 @@ function setDate(iso) {
 async function load(date) {
   currentDate = date;
   const s = await getJSON(`/api/summary?date=${date}`);
-  TLP = s.timeline_prefs || { order: [], shown: [], hidden: [] };
-  TAG_CATS = new Set(s.tag_categories || []);  // gate the +tag control by category
-  CATS = await getJSON("/api/categories");  // full list incl. user-created — for the chip row
-  rebuildCategoryColors(CATS);  // collision-free colours over the full set, before any render
+  const empty = { order: [], shown: [], hidden: [] };
+  TLP_ALL = {
+    tag: (s.timeline_prefs && s.timeline_prefs.tag) || { ...empty },
+    category: (s.timeline_prefs && s.timeline_prefs.category) || { ...empty },
+  };
+  CATEGORY_DEFS = s.category_defs || [];
+  TAGS = null;  // tag picker cache may be stale after a reload
+  // Every tag seen today + in roles + in category defs — for timeline chips and colours.
+  const roleTags = [].concat(...Object.values(s.tag_roles || {}));
+  const defTags = [].concat(...CATEGORY_DEFS.map((d) => d.tags));
+  ALL_TAG_NAMES = [...new Set([...(s.tags || []).map((t) => t.tag), ...roleTags, ...defTags])];
+  // Collision-free colours over every tag + category name, before any render.
+  rebuildCategoryColors([...ALL_TAG_NAMES, ...CATEGORY_DEFS.map((d) => d.name)]);
   renderHero(s);
   renderSwim(s.sessions, s.day_start);
-  renderCategories(s.categories, s.cat_tags);
+  renderCategories(s.categories, s.total_seconds);
   renderTags(s);
   renderApps(s.apps);
   renderBrowsing(s.browsing);
@@ -890,6 +884,12 @@ async function init() {
     APP_FILTER = b.dataset.src;
     for (const x of document.querySelectorAll("#app-filter button")) x.classList.toggle("active", x === b);
     applyAppFilter();
+  };
+  // Activity-timeline Tag / Category view toggle (re-lanes the same sessions).
+  for (const b of document.querySelectorAll("#tl-view button")) b.onclick = () => {
+    TL_VIEW = b.dataset.tlview;
+    for (const x of document.querySelectorAll("#tl-view button")) x.classList.toggle("active", x === b);
+    renderSwim(lastSwim.sessions, lastSwim.dayStart);
   };
   document.getElementById("scrim").onclick = closeDrawer;
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });

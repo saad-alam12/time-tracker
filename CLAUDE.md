@@ -23,24 +23,29 @@ visualisation, and Mac + iPhone unified in one dashboard."
 - **Usage data stays local.** Never upload the DB/timeline — no cloud, no telemetry. *Soft
   constraint (relaxed by Saad):* fetching public assets (app/site icons, fonts) over the
   network is OK if cached locally; only the lookup key leaves the machine.
-- **Categories are time-aware.** `config/overrides.json` holds `{type,key,category,since}`
-  overrides set from the dashboard; each applies only from `since` onward (past usage keeps
-  its old category). Newest override for a key wins and persists as the default. `type` is
-  `app | site | page` — `page` keys a single subpage (canonical URL) and beats site/rule;
-  subpages inherit the domain's category until overridden.
-- **Apps with drill-downs get NO app-level category** (Comet, Warp): their subtabs/dirs
-  carry categories individually, so the parent stays uncategorised — do NOT add Warp/Comet
-  to a `categories.json` bundle list. Exception: the `youtube.com` domain stays `Fun`.
+- **Tags are the primary (only) manual label, time-aware.** `config/tags.json` holds
+  `{type,key,tag,on,since}` assignments set from the dashboard; an app/site/page/dir can carry
+  any number of tags. `type` is `app | site | page | dir` (`page` = one subpage's canonical
+  URL; `dir` = a Warp project root, cascading to subfolders by longest-prefix). Latest entry
+  at/before a ts decides on/off; default `since=0` (retroactive — a tag describes what a thing
+  *is*). Resolved by `categorize.Tagger`. (The old per-chunk category + `overrides.json` are
+  retired; `overrides.json` is left on disk, unread.)
+- **Categories are emergent — named unions of tags.** `config/categories.json` =
+  `{categories:[{name,tags}]}`; a category's daily time sums every chunk whose tag set
+  *intersects* its tags, so categories OVERLAP and their totals can exceed the day total.
+  Derived at query time (`queries.build_summary`); create/edit/delete in dashboard ⚙ →
+  Categories (`categorize.save_category_def`/`delete_category_def`). No bundle/domain rules.
+- **Tag roles drive the hero rings only.** `settings.json → tag_roles {focus,productive,fun}`
+  gives each tag one role (unlisted = Neither). Four rings: Focus / Productive / Fun (each =
+  summed time of its role's tags; a chunk counts once per distinct role it carries) + Deep-work
+  blocks (uninterrupted Focus-role time). Set manually in ⚙; roles are NOT tags or categories.
 - **Dashboard prefs filter at query time, never mutate the DB.** `config/` JSON drives
-  `queries.build_summary`: `overrides.json` (categories), `ignore.json` (hidden apps/sites),
-  `timeline.json` (lane order + show/hide), `settings.json` → `category_roles`
-  (`{focus:[…],leisure:[…]}` — which categories count toward the Focus vs Leisure rings +
-  deep-work blocks; dashboard-written, read fresh per request, no restart). Toggles are
-  reversible because raw rows are untouched — add any new view control the same way.
-- **A category NAME lives in 4 files.** `categories.json` (rule key + `default`),
-  `overrides.json` (`category`), `settings.json` (`category_roles`), `timeline.json` (lane
-  lists). Renaming must touch all 4 (`categorize.rename_category` + `queries.rename_category_role`);
-  categories are derived at query time, so a rename relabels past+future with no DB change.
+  `queries.build_summary`: `tags.json` (tags), `categories.json` (category defs), `ignore.json`
+  (hidden apps/sites), `timeline.json` (per-view lane prefs — `{tag:{order,shown,hidden},
+  category:{…}}`), `settings.json → tag_roles`. All dashboard-written, read fresh per request,
+  no restart. Toggles are reversible because raw rows are untouched — add any new view control
+  the same way. The Activity timeline has two views (Tags / Categories) that re-lane the same
+  sessions; a session carries the UNION of its samples' tags.
 - **iPhone data is periodic, not real-time.** It arrives via Apple's cross-device sync
   whenever the phone syncs (minutes-to-hours lag). Mac data is live. This is accepted —
   do not try to build a custom iOS app to get real-time phone data (Apple sandboxes that).
@@ -59,9 +64,10 @@ visualisation, and Mac + iPhone unified in one dashboard."
    samples and imported device events. Must not double-count Mac usage that appears in
    both the live sampler and Biome.
 3. **Dashboard** (`dashboard/`): a small local web app — a Python server that reads the
-   DB and an HTML/JS page (Chart.js) showing totals, categories, and the timeline.
-4. **Categorisation** (`config/categories.*`): an editable rules file mapping app bundle
-   IDs and website domains to categories.
+   DB and an HTML/JS page (Chart.js) showing totals, tags, emergent categories, the rings,
+   and the timeline.
+4. **Classification** (`config/tags.json` + `config/categories.json`): dashboard-edited tag
+   assignments (the manual layer) and emergent category definitions (named unions of tags).
 
 ## Verified facts (already tested on Saad's machine — see FINDINGS.md for detail)
 
@@ -117,8 +123,11 @@ to confirm a specific number before moving on.
   (`~/proj`); only present at an idle shell prompt — while a program runs it owns the title, so
   those samples bucket as `(other)`. Needs `WARP_HONOR_PS1=1` (Warp default). Claude Code is
   the exception: the collector recovers its cwd from the freshest
-  `~/.claude/projects/<slug>/*.jsonl` log (`appinfo.claude_active_dir`, fresh ≤60s), so
-  Claude-in-Warp time maps to its directory instead of `(other)`.
+  `~/.claude/projects/<slug>/*.jsonl` log (`appinfo.claude_active_dir`), mapping
+  Claude-in-Warp time to its directory not `(other)`. That log isn't written while Claude
+  waits on a permission prompt / long tool, so a Claude-signature title (`✳`/braille
+  spinner/`Wants to run`, via `appinfo.is_claude_title`) widens the freshness window to
+  30 min; other titles keep the ≤60s fallback.
 - Unlike the Cowork session this plan was made in, **Claude Code can run code directly on
   this Mac** — use that to develop/test/iterate the collector and decoder yourself instead
   of asking Saad to paste output. Only ask Saad for: granting permissions, the iPhone
@@ -160,7 +169,7 @@ Time Tracker/
   collector/         # background agent (Mac sampler + Comet URL + Biome importer)
   decoder/           # SEGB / Biome decoder (build & validate first)
   dashboard/         # local web server + HTML/JS dashboard
-  config/            # categories rules, settings
+  config/            # tags, emergent categories, tag_roles, ignore, timeline prefs
   data/              # timetracker.sqlite (gitignored)
   dev/samples/       # copied sample Biome files for development (sensitive; delete later)
 ```

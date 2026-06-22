@@ -129,6 +129,24 @@ def _first_cwd(path: str) -> str | None:
     return None
 
 
+def is_claude_title(window_title: str | None) -> bool:
+    """Is this Warp title one Claude Code paints while running (not a cwd or other program)?
+
+    Claude overwrites the terminal title with one of three distinctive shapes: an idle/task
+    line ``✳ <name>`` (U+2733), a working braille spinner (U+2800–U+28FF), or a permission
+    prompt ``Wants to run …``. Any of these proves a Claude session is the active app *right
+    now* — so its log dir can be recovered even across a multi-minute pause (a permission
+    prompt or a long tool run) when the log itself hasn't been written for a while. A real
+    program's title (``npm run dev``, ``vim``) matches none of these and stays "(other)"."""
+    if not window_title:
+        return False
+    t = window_title.lstrip()
+    if not t:
+        return False
+    c = t[0]
+    return c == "✳" or "⠀" <= c <= "⣿" or t.startswith("Wants to run")
+
+
 def claude_active_dir(max_age_s: float = 60.0, now: float | None = None) -> str | None:
     """Home-relative cwd of the Claude Code session running right now, or ``None``.
 

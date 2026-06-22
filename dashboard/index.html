@@ -23,7 +23,7 @@
       </div>
       <div class="datenav">
         <button id="refresh" title="Refresh data (reload latest)">⟳</button>
-        <button id="settings" title="Category roles — choose which count as Focus / Leisure">⚙</button>
+        <button id="settings" title="Tag roles & categories">⚙</button>
       </div>
     </div>
   </header>
@@ -46,7 +46,13 @@
 
     <div id="day-view">
       <section class="card">
-        <h2>Activity timeline</h2>
+        <div class="card-head">
+          <h2>Activity timeline</h2>
+          <div class="segmented sm" id="tl-view">
+            <button data-tlview="tag" class="active">Tags</button>
+            <button data-tlview="category">Categories</button>
+          </div>
+        </div>
         <div class="swim" id="swim"></div>
         <div class="axis"><div></div><div class="axis-ticks" id="axis-ticks"></div></div>
         <div class="swim-hidden" id="swim-hidden"></div>
@@ -55,7 +61,7 @@
       <div class="grid">
         <section class="card">
           <h2>Categories</h2>
-          <div class="doughnut-wrap"><canvas id="categories"></canvas></div>
+          <div id="categories" class="barlist"></div>
           <div id="tagrings" class="tagrings" hidden></div>
         </section>
         <section class="card">

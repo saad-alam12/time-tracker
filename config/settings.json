@@ -10,26 +10,28 @@
   "biome_import_interval_seconds": 600,
   "goals": {
     "focus_seconds": 14400,
-    "leisure_cap_seconds": 7200,
+    "productive_seconds": 7200,
+    "fun_cap_seconds": 7200,
     "deep_blocks": 3
   },
-  "category_roles": {
+  "tag_roles": {
     "focus": [
-      "Work",
-      "Uni",
-      "Coding"
+      "CDBS Software",
+      "Time Tracker",
+      "Work"
     ],
-    "leisure": [
-      "Fun"
+    "productive": [
+      "Biohacking",
+      "Career",
+      "Organization+Planning",
+      "Training"
+    ],
+    "fun": [
+      "News",
+      "Shopping",
+      "Social Media",
+      "Sports"
     ]
   },
-  "tag_categories": [
-    "Work",
-    "Uni",
-    "Coding",
-    "Fun",
-    "Personal",
-    "Learning"
-  ],
   "baseline_days": 14
 }

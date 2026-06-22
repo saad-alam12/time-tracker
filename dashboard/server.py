@@ -12,15 +12,16 @@ only — the data never leaves the machine. No third-party server framework; jus
   GET /api/calendar?month=.. -> per-day totals for a month (YYYY-MM), for the calendar heatmap
   GET /api/detail?kind&key&date -> history + sessions + hourly for one app/site
   GET /api/icon?kind&key     -> cached app/site icon (404 if unresolved → letter-tile)
-  GET /api/categories        -> available category names for the picker
+  GET /api/categories        -> [{name, tags:[...]}, ...] emergent category definitions
+  GET /api/tags              -> all tag names ever assigned (for the picker + role settings)
   GET /api/ignored           -> [{type,key,name}, ...] apps/sites hidden from all views
-  GET /api/category_roles    -> {focus:[...], leisure:[...]} categories counting toward each ring
-  POST /api/categorize       -> {type,key,category}: set a time-aware category override
+  GET /api/tag_roles         -> {focus:[...], productive:[...], fun:[...]} tag roles → rings
+  POST /api/tag              -> {type,key,tag,on}: add/remove a tag on an app/site/page/dir
   POST /api/ignore           -> {type,key,on}: hide (on=true) / unhide (on=false) an app/site
-  POST /api/timeline_prefs   -> {order,shown,hidden}: save swimlane lane order + shown/hidden lanes
-  POST /api/category_roles   -> {focus:[...], leisure:[...]}: set Focus/Leisure category roles
-  POST /api/rename_category  -> {old,new}: rename a category across all config (past+future)
-  POST /api/delete_category  -> {name}: delete a category; its items become Uncategorised
+  POST /api/timeline_prefs   -> {view,order,shown,hidden}: save a swimlane view's lane prefs
+  POST /api/tag_roles        -> {focus,productive,fun}: set which tags count toward each ring
+  POST /api/category_def     -> {name,tags,old_name?}: create or edit an emergent category
+  POST /api/delete_category  -> {name}: delete an emergent category definition
 
 Run:  python3 dashboard/server.py [port]      (default port 8765)
 """
@@ -143,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/categories":
-            self._json(categorize.category_names())
+            self._json(categorize.load_category_defs())
             return
 
         if path == "/api/tags":
@@ -154,8 +155,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(queries.ignored_list())
             return
 
-        if path == "/api/category_roles":
-            self._json(queries.category_roles())
+        if path == "/api/tag_roles":
+            self._json(queries.tag_roles())
             return
 
         if path == "/api/icon":
@@ -178,46 +179,39 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 (http.server API)
         path = urlsplit(self.path).path
-        if path not in ("/api/categorize", "/api/ignore", "/api/timeline_prefs",
-                        "/api/category_roles", "/api/rename_category",
-                        "/api/delete_category", "/api/tag", "/api/tag_categories"):
+        if path not in ("/api/ignore", "/api/timeline_prefs", "/api/tag", "/api/tag_roles",
+                        "/api/category_def", "/api/delete_category"):
             self._send(404, b"not found", "text/plain")
             return
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
-            if path == "/api/rename_category":
-                old = (body.get("old") or "").strip()
-                if not old:
-                    raise ValueError("old name required")
-                new = categorize.rename_category(old, body.get("new", ""))
-                queries.rename_category_role(old, new)
-                queries.rename_tag_category(old, new)
-                self._json({"ok": True, "new": new})
+            if path == "/api/tag_roles":
+                roles = queries.save_tag_roles(
+                    body.get("focus", []), body.get("productive", []), body.get("fun", []))
+                self._json({"ok": True, **roles})
+                return
+            if path == "/api/category_def":
+                name = (body.get("name") or "").strip()
+                if not name:
+                    raise ValueError("name required")
+                cd = categorize.save_category_def(name, body.get("tags", []), body.get("old_name"))
+                self._json({"ok": True, **cd})
                 return
             if path == "/api/delete_category":
                 name = (body.get("name") or "").strip()
                 if not name:
                     raise ValueError("name required")
-                default = categorize.delete_category(name)
-                queries.remove_category_role(name)
-                queries.remove_tag_category(name)
-                self._json({"ok": True, "default": default})
-                return
-            if path == "/api/tag_categories":
-                cats = queries.save_tag_categories(body.get("categories", []))
-                self._json({"ok": True, "categories": cats})
-                return
-            if path == "/api/category_roles":
-                roles = queries.save_category_roles(
-                    body.get("focus", []), body.get("leisure", []))
-                self._json({"ok": True, **roles})
+                categorize.delete_category_def(name)
+                self._json({"ok": True})
                 return
             if path == "/api/timeline_prefs":
                 prefs = categorize.save_timeline_prefs(
-                    body.get("order", []), body.get("shown", []), body.get("hidden", []))
+                    body.get("view", "tag"), body.get("order", []),
+                    body.get("shown", []), body.get("hidden", []))
                 self._json({"ok": True, **prefs})
                 return
+            # Remaining endpoints act on an app/site/page/dir key.
             target_type = body["type"]
             key = body["key"]
             if not key:
@@ -232,16 +226,10 @@ class Handler(BaseHTTPRequestHandler):
                 since = categorize.add_tag(target_type, key, tag, on)
                 self._json({"ok": True, "since": since, "tag": tag, "on": on})
                 return
-            category = (body["category"] or "").strip()
-            if not category:
-                raise ValueError("category required")
-            # Dir categories are retroactive (cover past + future); app/site/page stay from-now-on.
-            since = categorize.add_override(
-                target_type, key, category, since=0 if target_type == "dir" else None)
         except (KeyError, ValueError, json.JSONDecodeError) as e:
             self._send(400, str(e).encode(), "text/plain")
             return
-        self._json({"ok": True, "since": since, "category": category})
+        self._send(404, b"not found", "text/plain")
 
     def log_message(self, *args) -> None:  # silence per-request logging
         pass

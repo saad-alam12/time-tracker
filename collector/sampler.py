@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from appinfo import claude_active_dir, domain_of, project_root
+from appinfo import claude_active_dir, domain_of, is_claude_title, project_root
 from db import connect, insert_mac_sample
 
 _CONFIG = Path(__file__).resolve().parent.parent / "config" / "settings.json"
@@ -145,7 +145,12 @@ def run() -> None:
             # writing its log right now, recover its directory and store it as the title — the
             # query-side project_root() then resolves it like a normal prompt cwd.
             if bid == _WARP_BUNDLE and not idle and project_root(window_title) is None:
-                d = claude_active_dir(max_age_s=max(60.0, interval * 4))
+                # A Claude title (✳/spinner/"Wants to run") proves a session is active now,
+                # even if it paused on a permission prompt or a long tool and hasn't written
+                # its log for minutes — so allow a generous staleness window in that case.
+                # A non-Claude program gets the short window and otherwise stays "(other)".
+                max_age = 1800.0 if is_claude_title(window_title) else max(60.0, interval * 4)
+                d = claude_active_dir(max_age_s=max_age)
                 if d:
                     window_title = d
             domain = domain_of(url)
