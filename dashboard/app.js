@@ -429,6 +429,8 @@ function applyAppFilter() {
         sr.innerHTML = `<div class="nm" title="${esc(d.name)}">${esc(d.name)}</div>`;
         if (d.taggable) {
           addTag(sr, d.tagType, d.name, d.name, d.tags);
+          sr.classList.add("clickable");
+          sr.onclick = () => openDetail(d.tagType, d.name, d.name);  // drill into this dir/note
         }
         const sv = document.createElement("div");
         sv.className = "val"; sv.textContent = fmt(d.seconds);
@@ -490,9 +492,10 @@ function renderWebsites(sites) {
       sublist.className = "sublist"; sublist.hidden = true;
       for (const sp of subs) {
         const sr = document.createElement("div");
-        sr.className = "subrow";
+        sr.className = "subrow clickable";
         sr.innerHTML = `<div class="nm" title="${esc(sp.page)}">${esc(sp.label)}</div>`;
         addTag(sr, "page", sp.page, sp.label, sp.tags);
+        sr.onclick = () => openDetail("page", sp.page, sp.label);  // drill into this page
         const sv = document.createElement("div");
         sv.className = "val"; sv.textContent = fmt(sp.seconds);
         sr.appendChild(sv);
@@ -572,18 +575,21 @@ async function openDetail(kind, key, name) {
   const d = await getJSON(`/api/detail?kind=${kind}&key=${encodeURIComponent(key)}&date=${currentDate}`);
   const drawer = document.getElementById("drawer");
   const avg = d.history.length ? d.history.reduce((a, h) => a + h.seconds, 0) / d.history.length : 0;
+  // Hide/ignore only applies to whole apps & sites; sub-keys (dir/note/page) can't be hidden.
+  const canHide = kind === "app" || kind === "site";
+  const visitsLabel = kind === "site" || kind === "page" ? "visits" : "sessions";
   drawer.innerHTML =
     `<div class="drawer-head">
        <span class="ico" id="d-ico"></span>
        <div><div class="nm">${name}</div>
             <span id="d-tags"></span></div>
-       <button class="hidebtn" id="d-hide" title="Hide from tracking — removes it from all views (undo in the Hidden panel)">Hide</button>
+       ${canHide ? `<button class="hidebtn" id="d-hide" title="Hide from tracking — removes it from all views (undo in the Hidden panel)">Hide</button>` : ""}
        <button class="close" id="d-close">✕</button>
      </div>
      <div class="stat-line">
        <div class="s"><b>${fmt(d.today_seconds)}</b><span>today</span></div>
        <div class="s"><b>${fmt(avg)}</b><span>${d.history.length}-day avg</span></div>
-       <div class="s"><b>${d.sessions}</b><span>${kind === "site" ? "visits" : "sessions"}</span></div>
+       <div class="s"><b>${d.sessions}</b><span>${visitsLabel}</span></div>
      </div>
      <h3>Last ${d.history.length} days</h3>
      <div class="chart-sm"><canvas id="d-history"></canvas></div>
@@ -595,7 +601,7 @@ async function openDetail(kind, key, name) {
   );
   document.getElementById("d-tags").appendChild(tagControl(kind, key, name, d.tags || []));
   document.getElementById("d-close").onclick = closeDrawer;
-  document.getElementById("d-hide").onclick = () => setIgnore(kind, key, true);
+  if (canHide) document.getElementById("d-hide").onclick = () => setIgnore(kind, key, true);
   destroy("d-history"); destroy("d-hourly");
   charts["d-history"] = new Chart(document.getElementById("d-history"), {
     type: "line",

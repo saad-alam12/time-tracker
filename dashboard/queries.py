@@ -577,16 +577,40 @@ def build_range(con, start_date: str, end_date: str) -> dict:
     return {"start": start_date, "end": end_date, "days": days}
 
 
+def _subkey_entry(summary: dict, kind: str, key: str) -> tuple[float, list, str]:
+    """(seconds, tags, display-name) for a 'dir' / 'note' / 'page' key within one day's summary.
+
+    These keys aren't apps or sites — they're the per-app/per-site breakdowns build_summary
+    nests under their parent (Warp directories, Obsidian notes, a domain's subpages). Returns
+    zeros if the key has no time that day."""
+    if kind == "dir":
+        app = next((a for a in summary["apps"] if a["bundle_id"] == WARP_BUNDLE), None)
+        e = next((x for x in (app or {}).get("directories", []) if x["dir"] == key), None)
+        return (e["seconds"], e["tags"], key) if e else (0.0, [], key)
+    if kind == "note":
+        app = next((a for a in summary["apps"] if a["bundle_id"] == OBSIDIAN_BUNDLE), None)
+        e = next((x for x in (app or {}).get("notes", []) if x["note"] == key), None)
+        return (e["seconds"], e["tags"], key) if e else (0.0, [], key)
+    for w in summary["websites"]:  # page: a subpage nested under its domain
+        for sp in w.get("subpages", []):
+            if sp["page"] == key:
+                return sp["seconds"], sp["tags"], sp.get("label") or key
+    return (0.0, [], key)
+
+
 def build_detail(con, kind: str, key: str, date_str: str, days: int = 14) -> dict:
-    """History + sessions + hourly distribution for one app (bundle id) or site (domain)."""
+    """History + sessions + hourly distribution for one app (bundle id), site (domain), Warp
+    directory ('dir'), Obsidian note ('note') or browser subpage ('page')."""
     d = dt.date.fromisoformat(date_str)
     history = []
     for i in range(days - 1, -1, -1):
         s = build_summary(con, (d - dt.timedelta(days=i)).isoformat(), include_prev=False)
         if kind == "app":
             secs = sum(a["seconds"] for a in s["apps"] if a["bundle_id"] == key)
-        else:
+        elif kind == "site":
             secs = sum(w["seconds"] for w in s["websites"] if w["domain"] == key)
+        else:
+            secs = _subkey_entry(s, kind, key)[0]
         history.append({"date": (d - dt.timedelta(days=i)).isoformat(), "seconds": secs})
 
     today = build_summary(con, date_str, include_prev=False)
@@ -599,7 +623,7 @@ def build_detail(con, kind: str, key: str, date_str: str, days: int = 14) -> dic
         for x in sess:
             _bucket_hours(hourly, x["start"], x["end"], start)
         sessions_count = len(sess)
-    else:
+    elif kind == "site":
         name = key
         w = next((w for w in today["websites"] if w["domain"] == key), None)
         tags = w["tags"] if w else []
@@ -609,6 +633,38 @@ def build_detail(con, kind: str, key: str, date_str: str, days: int = 14) -> dic
             (key, start, end),
         ):
             _bucket_hours(hourly, ts, ts + interval, start)
+    else:
+        # dir/note/page keys aren't DB columns — re-derive today's hourly + session count from
+        # raw Mac samples using the same resolver build_summary applies (project_root /
+        # obsidian_note / canonical_url). A session breaks when the gap exceeds one interval.
+        _secs, tags, name = _subkey_entry(today, kind, key)
+        if kind == "dir":
+            rows = con.execute(
+                "SELECT ts, interval, window_title FROM mac_samples"
+                " WHERE bundle_id = ? AND idle = 0 AND ts >= ? AND ts < ? ORDER BY ts",
+                (WARP_BUNDLE, start, end))
+            resolve = project_root
+        elif kind == "note":
+            rows = con.execute(
+                "SELECT ts, interval, window_title FROM mac_samples"
+                " WHERE bundle_id = ? AND idle = 0 AND ts >= ? AND ts < ? ORDER BY ts",
+                (OBSIDIAN_BUNDLE, start, end))
+            resolve = obsidian_note
+        else:  # page
+            rows = con.execute(
+                "SELECT ts, interval, url FROM mac_samples"
+                " WHERE url IS NOT NULL AND idle = 0 AND ts >= ? AND ts < ? ORDER BY ts",
+                (start, end))
+            resolve = canonical_url
+        sessions_count = 0
+        prev_end: int | None = None
+        for ts, interval, v in rows:
+            if resolve(v) != key:
+                continue
+            _bucket_hours(hourly, ts, ts + interval, start)
+            if prev_end is None or ts - prev_end > interval:
+                sessions_count += 1
+            prev_end = ts + interval
 
     return {
         "kind": kind, "key": key, "name": name, "tags": tags,
