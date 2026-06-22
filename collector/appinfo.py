@@ -95,6 +95,26 @@ def project_root(window_title: str | None) -> str | None:
     return f"~/{rest.split('/', 1)[0]}"
 
 
+def obsidian_note(window_title: str | None) -> str | None:
+    """Note title from an Obsidian window title, parallel to ``project_root`` for Warp.
+
+    Obsidian names its window ``<note> - <vault> - Obsidian <version>`` (e.g.
+    ``0 CDBS Software Plan - Saads Actual Vault copy - Obsidian 1.12.7``). The last two
+    `` - ``-separated segments are always the vault and the ``Obsidian <version>`` tail, so
+    the note is everything before them — splitting off only the *last two* separators means a
+    note whose own title contains `` - `` still resolves correctly. Returns ``None`` when no
+    note is open (the title is just ``<vault> - Obsidian <version>``) or the title is not an
+    Obsidian title at all.
+    """
+    if not window_title:
+        return None
+    parts = window_title.rsplit(" - ", 2)
+    if len(parts) != 3 or not parts[2].startswith("Obsidian"):
+        return None
+    note = parts[0].strip()
+    return note or None
+
+
 _CLAUDE_PROJECTS = os.path.expanduser("~/.claude/projects")
 
 

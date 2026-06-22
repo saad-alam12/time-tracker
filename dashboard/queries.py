@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "collector"))
 
-from appinfo import canonical_url, friendly_name, project_root  # noqa: E402
+from appinfo import canonical_url, friendly_name, obsidian_note, project_root  # noqa: E402
 from categorize import (  # noqa: E402
     Tagger, ignored_sets, load_ignored, load_category_defs, load_timeline_prefs,
 )
@@ -32,6 +32,7 @@ from categorize import (  # noqa: E402
 _SETTINGS = Path(__file__).resolve().parent.parent / "config" / "settings.json"
 
 WARP_BUNDLE = "dev.warp.Warp-Stable"  # only app with a per-directory drill-down
+OBSIDIAN_BUNDLE = "md.obsidian"       # per-note drill-down (window title holds the note name)
 
 # Work hours window (local) used for the "fun during work" metric.
 WORK_START, WORK_END = 9, 18
@@ -177,6 +178,7 @@ def build_summary(con, date_str: str, include_prev: bool = True) -> dict:
     web_meta: dict[str, list] = {}     # domain -> [sessions, first_ts, last_ts]
     subpages: dict[str, dict[str, list]] = {}  # domain -> canonical-url -> [seconds, label]
     directories: dict[str, list] = {}  # Warp project root -> [seconds, sessions, first_ts, last_ts]
+    notes: dict[str, list] = {}        # Obsidian note title -> [seconds, sessions, first_ts, last_ts]
     tag_totals: dict[str, float] = {}      # tag -> seconds
     role_totals: dict[str, float] = {"focus": 0.0, "productive": 0.0, "fun": 0.0}
     cat_totals: dict[str, float] = {}      # emergent category name -> seconds (overlapping)
@@ -209,6 +211,7 @@ def build_summary(con, date_str: str, include_prev: bool = True) -> dict:
     cur: list | None = None      # open app session [start, end, bundle, name, source, title, tags]
     cur_dom: str | None = None   # domain of the currently open browser session (for site sessions)
     cur_dir: str | None = None   # Warp project root of the current sample (for dir sessions)
+    cur_note: str | None = None  # Obsidian note of the current sample (for note sessions)
     for ts, interval, bundle_id, app_name, url, domain, window_title in rows:
         # Skip hidden apps, and hidden sites (a browser sample tagged with an ignored domain
         # is dropped whole — that time belonged to the hidden site).
@@ -222,7 +225,10 @@ def build_summary(con, date_str: str, include_prev: bool = True) -> dict:
         # For Warp, the window title holds the cwd; resolve its project root so the sample's
         # tags can follow a per-directory tag (dir_key is None for every other app).
         dk = project_root(window_title) if bundle_id == WARP_BUNDLE else None
-        sample_tags = sorted(tgr.tags_for(bundle_id, domain, page, dk, ts))
+        # For Obsidian, the window title holds the open note's name; resolve it so the sample's
+        # tags can follow a per-note tag (note_key is None for every other app).
+        note_key = obsidian_note(window_title) if bundle_id == OBSIDIAN_BUNDLE else None
+        sample_tags = sorted(tgr.tags_for(bundle_id, domain, page, dk, note_key, ts))
         _absorb(sample_tags, secs)
         if domain:
             _add(websites, domain, secs)
@@ -259,6 +265,22 @@ def build_summary(con, date_str: str, include_prev: bool = True) -> dict:
             cur_dir = dkey
         else:
             cur_dir = None
+        # Per-note breakdown for Obsidian (parallels the Warp directory block above). Samples
+        # with no resolvable note title (none open / non-Obsidian title) bucket as "(other)".
+        if bundle_id == OBSIDIAN_BUNDLE:
+            nkey = note_key or "(other)"
+            ne = notes.get(nkey)
+            if ne is None:
+                notes[nkey] = [secs, 1, ts, ts + interval]
+            else:
+                ne[0] += secs
+                if cur_note != nkey:  # re-opening a note after leaving it counts a new session
+                    ne[1] += 1
+                ne[2] = min(ne[2], ts)
+                ne[3] = ts + interval
+            cur_note = nkey
+        else:
+            cur_note = None
         # Merge contiguous same-app samples (a gap > one interval ends the session).
         if cur and cur[2] == bundle_id and ts - cur[1] <= interval:
             cur[1] = ts + secs
@@ -317,10 +339,19 @@ def build_summary(con, date_str: str, include_prev: bool = True) -> dict:
         for dk, (sec, sess_n, _first, _last) in sorted(directories.items(), key=lambda x: -x[1][0])
         if sec >= 60
     ]
+    # Obsidian's per-note breakdown: the notes opened that day, each with its current tags.
+    # The "(other)" bucket holds time when no note title could be resolved.
+    note_list = [
+        {"note": nk, "seconds": round(sec), "sessions": sess_n,
+         "tags": [] if nk == "(other)" else sorted(tgr.tags_for(note=nk, ts=end))}
+        for nk, (sec, sess_n, _first, _last) in sorted(notes.items(), key=lambda x: -x[1][0])
+        if sec >= 60
+    ]
     app_list = [
         {"bundle_id": b, "name": n, "source": s, "seconds": round(sec),
          "tags": sorted(tgr.tags_for(bundle_id=b, ts=end)),
-         **({"directories": dir_list} if b == WARP_BUNDLE else {})}
+         **({"directories": dir_list} if b == WARP_BUNDLE else {}),
+         **({"notes": note_list} if b == OBSIDIAN_BUNDLE else {})}
         for (b, n, s), sec in sorted(apps.items(), key=lambda x: -x[1])
     ]
     # Drop fleeting visits: only show sites used for at least 2 minutes. The browsing split

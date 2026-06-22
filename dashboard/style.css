@@ -257,6 +257,14 @@ main { padding: 24px 28px 60px; max-width: 1180px; margin: 0 auto; }
 .catmenu-it.new { color: var(--accent); border-top: 1px solid var(--stroke); margin-top: 4px; padding-top: 10px; }
 .catmenu-it .check { margin-left: auto; color: var(--accent); font-size: 12px; }
 .catmenu-it.on { color: var(--text); }
+.tagmenu-search {
+  width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 7px 9px;
+  background: var(--panel-2); border: 1px solid var(--stroke); border-radius: 8px;
+  color: var(--text); font-size: 13px; outline: none;
+}
+.tagmenu-search:focus { border-color: var(--accent); }
+.tagmenu-list { max-height: 240px; overflow-y: auto; }
+.tagmenu-empty { padding: 8px 10px; font-size: 12px; color: var(--muted); }
 
 /* Tags: orthogonal labels that overlap categories. */
 .tagedit {

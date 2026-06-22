@@ -394,14 +394,19 @@ function applyAppFilter() {
   if (!apps.length) { wrap.innerHTML = `<div class="empty-state">No apps recorded.</div>`; return; }
   const max = apps[0].seconds || 1;
   for (const a of apps) {
-    const dirs = a.directories || [];
+    // Warp drills down to project directories, Obsidian to notes — same collapsed-sublist UI,
+    // normalised to {name, seconds, tags, tagType, taggable}. An app has at most one of these.
+    const subItems = (a.directories || []).map((d) =>
+        ({ name: d.dir, seconds: d.seconds, tags: d.tags, tagType: "dir", taggable: d.dir !== "(other)" }))
+      .concat((a.notes || []).map((n) =>
+        ({ name: n.note, seconds: n.seconds, tags: n.tags, tagType: "note", taggable: n.note !== "(other)" })));
     const col = rowColor(a.tags);
     const row = document.createElement("div");
     row.className = "row";
     row.appendChild(iconEl("app", a.bundle_id, a.name, col));
     const meta = document.createElement("div");
     meta.className = "meta";
-    const caret = dirs.length ? `<span class="caret" aria-label="Show directories">›</span>` : "";
+    const caret = subItems.length ? `<span class="caret" aria-label="Show details">›</span>` : "";
     meta.innerHTML = `<div class="nm">${caret}${a.name}${sourceIcon(a.source)}</div>` +
       `<div class="bar" style="width:${Math.max(4, a.seconds / max * 100)}%;background:${col}"></div>`;
     addTag(meta.querySelector(".nm"), "app", a.bundle_id, a.name, a.tags);
@@ -412,18 +417,18 @@ function applyAppFilter() {
     row.onclick = () => openDetail("app", a.bundle_id, a.name);
     wrap.appendChild(row);
 
-    if (dirs.length) {
-      // Inline, collapsed list of the project directories worked in (Warp). Each dir can be
-      // tagged on its own (type "dir" tag, cascading to subfolders). The "(other)" bucket —
-      // time whose title wasn't a path — can't be tagged.
+    if (subItems.length) {
+      // Inline, collapsed list of the per-app breakdown: Warp project directories (tag type
+      // "dir", cascading to subfolders) or Obsidian notes (tag type "note"). The "(other)"
+      // bucket — time with no resolvable directory/note — can't be tagged.
       const sublist = document.createElement("div");
       sublist.className = "sublist"; sublist.hidden = true;
-      for (const d of dirs) {
+      for (const d of subItems) {
         const sr = document.createElement("div");
         sr.className = "subrow";
-        sr.innerHTML = `<div class="nm" title="${esc(d.dir)}">${esc(d.dir)}</div>`;
-        if (d.dir !== "(other)") {
-          addTag(sr, "dir", d.dir, d.dir, d.tags);
+        sr.innerHTML = `<div class="nm" title="${esc(d.name)}">${esc(d.name)}</div>`;
+        if (d.taggable) {
+          addTag(sr, d.tagType, d.name, d.name, d.tags);
         }
         const sv = document.createElement("div");
         sv.className = "val"; sv.textContent = fmt(d.seconds);
@@ -763,24 +768,67 @@ async function openTagMenu(anchor, kind, key, name, current) {
   const cur = new Set(current);
   const menu = document.createElement("div");
   menu.className = "catmenu tagmenu";
+  // Keep the menu open while interacting with the search box: clicks inside it must not reach
+  // the document-level close handler registered below.
+  menu.addEventListener("mousedown", (e) => e.stopPropagation());
+
+  const search = document.createElement("input");
+  search.className = "tagmenu-search";
+  search.type = "text";
+  search.placeholder = "Search or add tag…";
+  menu.appendChild(search);
+
+  const list = document.createElement("div");
+  list.className = "tagmenu-list";
+  menu.appendChild(list);
+
   const opts = [...new Set([...TAGS, ...current])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  for (const t of opts) {
-    const on = cur.has(t);
-    const it = document.createElement("div");
-    it.className = "catmenu-it" + (on ? " on" : "");
-    it.innerHTML = `<span class="dot" style="background:${categoryColor(t)}"></span>${esc(t)}<span class="check">${on ? "✓" : ""}</span>`;
-    it.onclick = () => applyTag(kind, key, t, !on);  // toggle
-    menu.appendChild(it);
-  }
+  // Pinned "create" row reflecting the current query — labelled and wired in render().
   const nw = document.createElement("div");
   nw.className = "catmenu-it new";
-  nw.textContent = "+ New tag…";
-  nw.onclick = () => { const v = prompt("New tag name"); if (v && v.trim()) applyTag(kind, key, v.trim(), true); };
   menu.appendChild(nw);
+
+  function render() {
+    const q = search.value.trim();
+    const ql = q.toLowerCase();
+    const shown = opts.filter((t) => t.toLowerCase().includes(ql));
+    list.innerHTML = "";
+    for (const t of shown) {
+      const on = cur.has(t);
+      const it = document.createElement("div");
+      it.className = "catmenu-it" + (on ? " on" : "");
+      it.innerHTML = `<span class="dot" style="background:${categoryColor(t)}"></span>${esc(t)}<span class="check">${on ? "✓" : ""}</span>`;
+      it.onclick = () => applyTag(kind, key, t, !on);  // toggle
+      list.appendChild(it);
+    }
+    if (!shown.length) {
+      const e = document.createElement("div");
+      e.className = "tagmenu-empty";
+      e.textContent = q ? "No matching tag." : "No tags yet.";
+      list.appendChild(e);
+    }
+    // When the query exactly matches an existing tag, the list row already handles it.
+    const exact = opts.some((t) => t.toLowerCase() === ql);
+    nw.hidden = !q || exact;
+    nw.textContent = q ? `+ Create “${q}”` : "";
+    nw.onclick = () => { if (q) applyTag(kind, key, q, true); };
+  }
+  search.addEventListener("input", render);
+  // Enter creates/applies the typed tag (or the sole match) without a round-trip to the mouse.
+  search.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const q = search.value.trim();
+    if (q) applyTag(kind, key, q, !cur.has(q));
+  });
+  render();
+
   document.body.appendChild(menu);
   const r = anchor.getBoundingClientRect();
   menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 12) + "px";
-  menu.style.top = (r.bottom + 6) + "px";
+  // Clamp vertically so the (now height-capped) menu never spills past the viewport bottom.
+  const top = Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 12);
+  menu.style.top = Math.max(12, top) + "px";
+  search.focus();
   setTimeout(() => document.addEventListener("click", closeTagMenu, { once: true }), 0);
 }
 async function applyTag(kind, key, tag, on) {

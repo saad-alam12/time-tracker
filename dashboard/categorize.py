@@ -208,11 +208,11 @@ def tag_names() -> list[str]:
 
 
 def add_tag(target_type: str, key: str, tag: str, on: bool = True, since: int | None = None) -> int:
-    """Add (``on=True``) or remove (``on=False``) a tag on an app/site/page/dir key, effective
-    from ``since`` (defaults to retroactive, since=0). Append-only and time-aware. Returns
-    ``since``."""
-    if target_type not in ("app", "site", "page", "dir"):
-        raise ValueError("target_type must be 'app', 'site', 'page' or 'dir'")
+    """Add (``on=True``) or remove (``on=False``) a tag on an app/site/page/dir/note key,
+    effective from ``since`` (defaults to retroactive, since=0). Append-only and time-aware.
+    Returns ``since``."""
+    if target_type not in ("app", "site", "page", "dir", "note"):
+        raise ValueError("target_type must be 'app', 'site', 'page', 'dir' or 'note'")
     tag = tag.strip()
     if not tag:
         raise ValueError("tag required")
@@ -269,7 +269,7 @@ class Tagger:
 
     def tags_for(self, bundle_id: str | None = None, domain: str | None = None,
                  page: str | None = None, dir_key: str | None = None,
-                 ts: int | None = None) -> set[str]:
+                 note: str | None = None, ts: int | None = None) -> set[str]:
         t = _FAR_FUTURE if ts is None else ts
         out: set[str] = set()
         if bundle_id:
@@ -278,6 +278,8 @@ class Tagger:
             self._collect(self._exact.get(("page", page)), t, out)
         if domain:
             self._collect(self._exact.get(("site", domain.lower())), t, out)
+        if note:
+            self._collect(self._exact.get(("note", note)), t, out)
         if dir_key:
             # Every matching prefix contributes; the longest match for each tag wins on/off.
             best: dict[str, tuple[int, bool]] = {}
